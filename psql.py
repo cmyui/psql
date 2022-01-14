@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.9
-"""A program for playing with the postgres 3.0 protocol.
+"""A program for playing with the postgres 3.0 protocol - for learning purposes.
 """
 
 __author__ = "Joshua Smith (cmyui)"
@@ -30,9 +30,7 @@ PROTO_MINOR = 0
 
 def write_startup_packet() -> bytes:
     startup_packet = bytearray()
-    startup_packet += struct.pack(
-        ">hh", PROTO_MAJOR, PROTO_MINOR
-    )  # protocol version (major, minor)
+    startup_packet += struct.pack(">hh", PROTO_MAJOR, PROTO_MINOR)
 
     for param_name, param_value in (
         (b"user", DB_USER),
@@ -106,6 +104,8 @@ def run_client(server_sock: socket.socket) -> int:
                     data_view = data_view[1:]
 
                 print("[{S}] {M} ({R}:{L})".format(**fields))
+                shutting_down = True
+
             elif response_type == ord("R"):  # authentication request
                 authentication_type = struct.unpack(">i", data_view[:4])[0]
                 data_view = data_view[4:]
