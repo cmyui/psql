@@ -17,37 +17,10 @@ from types import FrameType
 from typing import Any, Callable, Optional, TypeVar, TypedDict
 
 import config
+import log
 import packets
 
 # logging functions
-
-
-def _log(s: object, col: str, typ: str) -> None:
-    print(f"[{col}{typ}\x1b[0m]", s)
-
-
-def log_error(s: object) -> None:
-    _log(s, "\x1b[0;91m", "error")
-
-
-def log_success(s: object) -> None:
-    _log(s, "\x1b[0;92m", "success")
-
-
-def log_status(s: object) -> None:
-    _log(s, "\x1b[0;93m", "status")
-
-
-def log_handler(s: object) -> None:
-    _log(s, "\x1b[0;94m", "handler")
-
-
-def log_recv(s: object) -> None:
-    _log(s, "\x1b[0;95m", "recv")
-
-
-def log_send(s: object) -> None:
-    _log(s, "\x1b[0;96m", "send")
 
 
 # binary (de)serialization
@@ -182,7 +155,7 @@ def handle_error_response(reader: PacketReader, client: PGClient) -> None:
         field_value = reader.read_nullterm_string()
         err_fields[chr(field_type)] = field_value
 
-    log_error("[{S}] {M} ({R}:{L})".format(**err_fields))
+    log.error("[{S}] {M} ({R}:{L})".format(**err_fields))
 
     if not client.authenticated:
         client.shutting_down = True
@@ -195,7 +168,7 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
 
     if authentication_type == 5:  # md5 password
         if config.DEBUG_MODE:
-            log_status("handling salted md5 authentication")
+            log.status("handling salted md5 authentication")
 
         # send md5 password authentication packet
         client.packet_buffer += packets.fe_md5_auth_packet(
@@ -211,9 +184,9 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
         # auth went ok
         client.authenticating = False
         client.authenticated = True
-        log_success("authentication successful")
+        log.success("authentication successful")
     else:
-        log_error(f"unhandled authentication type {authentication_type}")
+        log.error(f"unhandled authentication type {authentication_type}")
 
 
 @register(ResponseType.ParameterStatus)
@@ -223,7 +196,7 @@ def handle_parameter_status(reader: PacketReader, client: PGClient) -> None:
     client.parameters[key] = val
 
     if config.DEBUG_MODE:
-        log_status(f"read param {key}={val}")
+        log.status(f"read param {key}={val}")
 
 
 @register(ResponseType.BackendKeyData)
@@ -279,7 +252,7 @@ def handle_row_data(reader: PacketReader, client: PGClient) -> None:
         py_field_type = PG_TYPE_MAPPING[field["type_id"]]
         field["value"] = py_field_type(value_bytes)
 
-        log_status(f"read field {field_name}={field['value']}")
+        log.status(f"read field {field_name}={field['value']}")
 
 
 @register(ResponseType.EmptyQueryResponse)
@@ -288,12 +261,12 @@ def handle_empty_query_response(reader: PacketReader, client: PGClient) -> None:
     command_tag = reader.read_nullterm_string()
     client.command["has_result"] = True
 
-    log_status(f"received empty query response for `{command_tag}`")
+    log.status(f"received empty query response for `{command_tag}`")
 
 
 @register(ResponseType.CommandComplete)
 def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
-    log_success("command complete")
+    log.success("command complete")
 
 
 # running client
@@ -301,7 +274,7 @@ def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
 
 def run_client(server_sock: socket.socket) -> int:
     """Run the client until shut down programmatically."""
-    log_status("initiating postgres protocol startup")
+    log.status("initiating postgres protocol startup")
 
     client = PGClient()
 
@@ -344,12 +317,12 @@ def run_client(server_sock: socket.socket) -> int:
             client.packet_buffer.clear()
 
             if config.DEBUG_MODE:
-                log_send(to_send)
+                log.send(to_send)
 
             server_sock.send(to_send)
 
         if client.shutting_down:
-            log_status("connection terminated")
+            log.status("connection terminated")
             break
 
         # read response type & lengths
@@ -368,18 +341,18 @@ def run_client(server_sock: socket.socket) -> int:
             to_read -= bytes_read
 
         if config.DEBUG_MODE:
-            log_recv((header_bytes + buf_view.tobytes()))
+            log.recv((header_bytes + buf_view.tobytes()))
 
         # handle response
         with memoryview(buf) as data_view:
             packet_handler = RESPONSE_HANDLERS.get(response_type)
             if packet_handler is None:
                 # we don't have a handler for this packet
-                log_error(f"{chr(response_type)}={data_view.tobytes()}")
+                log.error(f"{chr(response_type)}={data_view.tobytes()}")
                 continue
 
             if config.DEBUG_MODE:
-                log_handler(packet_handler.__name__)
+                log.handler(packet_handler.__name__)
 
             reader = PacketReader(data_view.toreadonly())
 
