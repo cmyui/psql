@@ -1,19 +1,4 @@
-from enum import IntEnum
 from typing import Any, Optional, TypedDict
-
-
-class ResponseType(IntEnum):
-    # https://www.postgresql.org/docs/14/protocol-message-formats.html
-    ErrorResponse = ord("E")
-    AuthenticationRequest = ord("R")
-    ParameterStatus = ord("S")
-    BackendKeyData = ord("K")
-    ReadyForQuery = ord("Z")
-    RowDescription = ord("T")
-    RowData = ord("D")
-    CommandComplete = ord("C")
-    EmptyQueryResponse = ord("I")
-
 
 PG_TYPE_MAPPING = {23: int, 25: bytes}
 

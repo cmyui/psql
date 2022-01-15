@@ -10,7 +10,6 @@ __email__ = "cmyuiosu@gmail.com"
 
 import signal
 import socket
-import struct
 from types import FrameType
 from typing import Optional
 
@@ -82,8 +81,7 @@ def run_client(server_sock: socket.socket) -> int:
 
         # read response type & lengths
         header_bytes = server_sock.recv(5)
-        response_type = objects.ResponseType(header_bytes[0])
-        response_len = struct.unpack(">i", header_bytes[1:])[0]
+        response_type, response_len = packets.read_packet_header(header_bytes)
 
         # allocate buffer for the remainder of our response
         to_read = response_len - 4  # (don't include length)
@@ -111,9 +109,8 @@ def run_client(server_sock: socket.socket) -> int:
 
             reader = packets.PacketReader(data_view.toreadonly())
 
-            # TODO: this will currently always return none
-            # would it make sense to return some response?
-            result = packet_handler(reader, client)
+            # call our packet handler
+            packet_handler(reader, client)
 
     return 0
 
@@ -122,11 +119,18 @@ class SignalError(Exception):
     ...
 
 
-def handle_sigterm_as_keyboard_interrupt() -> None:
-    def signal_handler(signum: int, frame: Optional[FrameType] = None) -> None:
+def setup_shutdown_signal_handlers() -> None:
+    def signal_handler(
+        signum: int,
+        frame: Optional[FrameType] = None,
+    ) -> None:
         raise SignalError
 
-    for signum in {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}:
+    for signum in {
+        signal.SIGINT,
+        signal.SIGTERM,
+        signal.SIGHUP,
+    }:
         signal.signal(signum, signal_handler)
 
 
@@ -134,11 +138,15 @@ def main() -> int:
     # use GNU readline interface
     import readline  # type: ignore
 
-    handle_sigterm_as_keyboard_interrupt()
+    # ensure the server is notified
+    # of any client disconnections
+    setup_shutdown_signal_handlers()
 
     # connect to the postgres server
-    with socket.create_connection((config.DB_HOST, config.DB_PORT)) as sock:
-        # and run our client until stopped
+    # and run our client until stopped
+    with socket.create_connection(
+        (config.DB_HOST, config.DB_PORT),
+    ) as sock:
         return run_client(sock)
 
 

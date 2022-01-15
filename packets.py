@@ -1,9 +1,31 @@
 import struct
+from enum import IntEnum
 from typing import Any
 
 import helpers
 
 # binary deserialization (reading)
+
+
+class ResponseType(IntEnum):
+    # https://www.postgresql.org/docs/14/protocol-message-formats.html
+    ErrorResponse = ord("E")
+    AuthenticationRequest = ord("R")
+    ParameterStatus = ord("S")
+    BackendKeyData = ord("K")
+    ReadyForQuery = ord("Z")
+    RowDescription = ord("T")
+    RowData = ord("D")
+    CommandComplete = ord("C")
+    EmptyQueryResponse = ord("I")
+
+
+def read_packet_header(data: bytes) -> tuple[ResponseType, int]:
+    assert len(data) == 5
+
+    response_type = ResponseType(data[0])
+    response_len = struct.unpack(">i", data[1:])[0]
+    return response_type, response_len
 
 
 class PacketReader:

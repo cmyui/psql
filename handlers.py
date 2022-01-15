@@ -4,8 +4,8 @@ import config
 import log
 import objects
 import packets
-from objects import PGClient, ResponseType
-from packets import PacketReader
+from objects import PGClient
+from packets import PacketReader, ResponseType
 
 # packet handling
 
