@@ -1,4 +1,4 @@
-# psql - a minimal command-line excuse to learn postgres' protocol
+# psql - a minimal pg cli app for educational purposes
 
 ## Goals
 - Connect to server [Done]
