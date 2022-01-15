@@ -7,10 +7,10 @@ __email__ = "cmyuiosu@gmail.com"
 
 
 import hashlib
+import signal
 import socket
 import struct
 from enum import IntEnum
-import signal
 from types import FrameType
 from typing import Any, Callable, Optional, TypeVar, TypedDict
 
@@ -20,7 +20,7 @@ DB_NAME = b"gulag"
 DB_USER = b"cmyui"
 DB_PASS = b"lol123"
 
-DEBUG_MODE = True
+DEBUG_MODE = False
 PS1 = "λ"
 
 # NOTE: program only supports 3.0 at the moment
@@ -146,7 +146,7 @@ class ResponseType(IntEnum):
     EmptyQueryResponse = ord("I")
 
 
-PG_TYPE_MAPPING = {23: int}
+PG_TYPE_MAPPING = {23: int, 25: bytes}
 
 
 class Field(TypedDict):
@@ -217,7 +217,7 @@ def handle_error_response(reader: PacketReader, client: PGClient) -> None:
         field_value = reader.read_nullterm_string()
         err_fields[chr(field_type)] = field_value
 
-    print("[{S}] {M} ({R}:{L})".format(**err_fields))
+    log_error("[{S}] {M} ({R}:{L})".format(**err_fields))
 
     if not client.authenticated:
         client.shutting_down = True
@@ -307,19 +307,14 @@ def handle_row_data(reader: PacketReader, client: PGClient) -> None:
     row = client.command["rows"][-1]
     assert num_values == len(row["fields"])
 
-    _field_dict = {}  # used for logging
-
     for field_name, field in row["fields"]:
         value_len = reader.read_i32()
         value_bytes = reader.read_bytes(value_len)
 
         py_field_type = PG_TYPE_MAPPING[field["type_id"]]
-        field_value = py_field_type(value_bytes)
-        field["value"] = field_value
+        field["value"] = py_field_type(value_bytes)
 
-        _field_dict[field_name] = field_value  # used for logging
-
-    log_status(_field_dict)
+        log_status(f"read field {field_name}={field['value']}")
 
 
 @register(ResponseType.EmptyQueryResponse)
@@ -356,6 +351,9 @@ def run_client(server_sock: socket.socket) -> int:
             except (KeyboardInterrupt, EOFError):
                 # shutdown the client gracefully
                 client.shutting_down = True
+
+                print("\33[2K", end="\r")  # reset line
+                print("\x1b[0;91mreceived interrupt signal\x1b[0m")
 
                 # send the conn termination packet
                 client.packet_buffer += b"X"
