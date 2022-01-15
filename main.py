@@ -1,5 +1,7 @@
 #!/usr/bin/env python3.9
 """A program for playing with the postgres 3.0 protocol - for learning purposes.
+
+I've been wanting to make a database client for a while now, this is pretty fun!
 """
 
 __author__ = "Joshua Smith (cmyui)"
@@ -14,19 +16,8 @@ from enum import IntEnum
 from types import FrameType
 from typing import Any, Callable, Optional, TypeVar, TypedDict
 
-# config
-
-DB_NAME = b"gulag"
-DB_USER = b"cmyui"
-DB_PASS = b"lol123"
-
-DEBUG_MODE = False
-PS1 = "λ"
-
-# NOTE: program only supports 3.0 at the moment
-PROTO_MAJOR = 3
-PROTO_MINOR = 0
-
+import config
+import packets
 
 # logging functions
 
@@ -107,34 +98,8 @@ class PacketReader:
         return val
 
 
-# TODO: pg packet writer functions
-
-
-def md5hex(s: bytes) -> bytes:
-    return hashlib.md5(s).hexdigest().encode()
-
-
-def write_startup_packet() -> bytes:
-    startup_packet = bytearray()
-    startup_packet += struct.pack(">hh", PROTO_MAJOR, PROTO_MINOR)
-
-    for param_name, param_value in (
-        (b"user", DB_USER),
-        (b"database", DB_NAME),
-    ):
-        startup_packet += param_name + b"\x00" + param_value + b"\x00"
-
-    # zero byte is required as terminator
-    # after the last name/value pair
-    startup_packet += b"\x00"
-
-    # insert packet length at startup
-    startup_packet[0:0] = struct.pack(">i", len(startup_packet) + 4)
-
-    return startup_packet
-
-
 class ResponseType(IntEnum):
+    # https://www.postgresql.org/docs/14/protocol-message-formats.html
     ErrorResponse = ord("E")
     AuthenticationRequest = ord("R")
     ParameterStatus = ord("S")
@@ -229,17 +194,15 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
     authentication_type = reader.read_i32()
 
     if authentication_type == 5:  # md5 password
-        log_status("handling salted md5 authentication")
-        salt = reader.read_bytes(4)
+        if config.DEBUG_MODE:
+            log_status("handling salted md5 authentication")
 
-        # our next packet will be a password message
-        # TODO: function to write this packet
-        client.packet_buffer += b"p"
-        client.packet_buffer += struct.pack(">i", 4 + 3 + 32 + 1)  # length
-
-        client.packet_buffer += b"md5"
-        client.packet_buffer += md5hex(md5hex(DB_PASS + DB_USER) + salt)
-        client.packet_buffer += b"\x00"
+        # send md5 password authentication packet
+        client.packet_buffer += packets.fe_md5_auth_packet(
+            db_user=config.DB_USER,
+            db_pass=config.DB_PASS,
+            salt=reader.read_bytes(4),
+        )
 
         client.authenticating = True
     elif authentication_type == 0:
@@ -258,7 +221,9 @@ def handle_parameter_status(reader: PacketReader, client: PGClient) -> None:
     key = reader.read_nullterm_string()
     val = reader.read_nullterm_string()
     client.parameters[key] = val
-    log_status(f"read param {key}={val}")
+
+    if config.DEBUG_MODE:
+        log_status(f"read param {key}={val}")
 
 
 @register(ResponseType.BackendKeyData)
@@ -336,49 +301,49 @@ def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
 
 def run_client(server_sock: socket.socket) -> int:
     """Run the client until shut down programmatically."""
-    log_status("Initiating postgres protocol startup")
+    log_status("initiating postgres protocol startup")
 
     client = PGClient()
 
     # initiate communication with a startup packet
-    client.packet_buffer = bytearray(write_startup_packet())
+    client.packet_buffer += packets.fe_startup_packet(
+        proto_ver_major=config.PROTO_MAJOR,
+        proto_ver_minor=config.PROTO_MINOR,
+        db_params={
+            b"user": config.DB_USER,
+            b"database": config.DB_NAME,
+        },
+    )
 
     while not client.shutting_down:
         if client.ready_for_query:
             # prompt the user for a query
             try:
-                user_input = input(f"{PS1} ")
+                user_input = input(f"{config.PS1} ")
             except (KeyboardInterrupt, EOFError):
                 # shutdown the client gracefully
                 client.shutting_down = True
 
-                print("\33[2K", end="\r")  # reset line
                 print("\x1b[0;91mreceived interrupt signal\x1b[0m")
 
                 # send the conn termination packet
-                client.packet_buffer += b"X"
-                client.packet_buffer += struct.pack(">i", 4)
+                client.packet_buffer += packets.fe_termination_packet()
             else:
-                # we received user input
+                # we received user input, issue a command (query) to the backend
                 client.command = {
                     "query": user_input,
                     "rows": [],
                     "has_result": False,
                 }
                 client.ready_for_query = False
-
-                client.packet_buffer += b"Q"
-                client.packet_buffer += struct.pack(
-                    ">i", len(client.command["query"]) + 1 + 4
-                )
-                client.packet_buffer += client.command["query"].encode() + b"\x00"
+                client.packet_buffer += packets.fe_query_packet(client.command["query"])
 
         if client.packet_buffer:
             # we have packets to send
             to_send = bytes(client.packet_buffer)
             client.packet_buffer.clear()
 
-            if DEBUG_MODE:
+            if config.DEBUG_MODE:
                 log_send(to_send)
 
             server_sock.send(to_send)
@@ -402,7 +367,7 @@ def run_client(server_sock: socket.socket) -> int:
             buf_view = buf_view[:bytes_read]
             to_read -= bytes_read
 
-        if DEBUG_MODE:
+        if config.DEBUG_MODE:
             log_recv((header_bytes + buf_view.tobytes()))
 
         # handle response
@@ -413,7 +378,7 @@ def run_client(server_sock: socket.socket) -> int:
                 log_error(f"{chr(response_type)}={data_view.tobytes()}")
                 continue
 
-            if DEBUG_MODE:
+            if config.DEBUG_MODE:
                 log_handler(packet_handler.__name__)
 
             reader = PacketReader(data_view.toreadonly())
