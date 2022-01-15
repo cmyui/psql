@@ -34,6 +34,7 @@ def run_client(server_sock: socket.socket) -> int:
         db_params={
             b"user": config.DB_USER,
             b"database": config.DB_NAME,
+            # TODO: other params
         },
     )
 
@@ -126,7 +127,7 @@ def main() -> int:
     handle_sigterm_as_keyboard_interrupt()
 
     # connect to the postgres server
-    with socket.create_connection(("127.0.0.1", 5432)) as sock:
+    with socket.create_connection((config.DB_HOST, config.DB_PORT)) as sock:
         # and run our client until stopped
         return run_client(sock)
 

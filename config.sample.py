@@ -1,5 +1,7 @@
 """Configuration values used throughout pysql."""
 
+DB_HOST = "localhost"
+DB_PORT = 5432
 DB_NAME = b"gulag"
 DB_USER = b"cmyui"
 DB_PASS = b"lol123"
