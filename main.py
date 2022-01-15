@@ -23,7 +23,10 @@ import packets
 
 def run_client(server_sock: socket.socket) -> int:
     """Run the client until shut down programmatically."""
-    log.status("initiating postgres protocol startup")
+    log.status(
+        f"initiating postgres protocol startup "
+        f"(v{config.PROTO_MAJOR}.{config.PROTO_MINOR})"
+    )
 
     client = objects.PGClient()
 
@@ -38,12 +41,14 @@ def run_client(server_sock: socket.socket) -> int:
         },
     )
 
+    # run the program as a command-line interface,
+    # closing on SIGINT, SIGTERM, SIGHUP or EOFError.
     while not client.shutting_down:
         if client.ready_for_query:
             # prompt the user for a query
             try:
                 user_input = input(f"{config.PS1} ")
-            except (KeyboardInterrupt, EOFError):
+            except (SignalError, EOFError):
                 # shutdown the client gracefully
                 client.shutting_down = True
 
@@ -113,11 +118,16 @@ def run_client(server_sock: socket.socket) -> int:
     return 0
 
 
+class SignalError(Exception):
+    ...
+
+
 def handle_sigterm_as_keyboard_interrupt() -> None:
     def signal_handler(signum: int, frame: Optional[FrameType] = None) -> None:
-        raise KeyboardInterrupt
+        raise SignalError
 
-    signal.signal(signal.SIGTERM, signal_handler)
+    for signum in {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}:
+        signal.signal(signum, signal_handler)
 
 
 def main() -> int:
