@@ -10,6 +10,8 @@ import hashlib
 import socket
 import struct
 from enum import IntEnum
+import signal
+from types import FrameType
 from typing import Any, Callable, Optional, TypeVar, TypedDict
 
 # config
@@ -305,12 +307,19 @@ def handle_row_data(reader: PacketReader, client: PGClient) -> None:
     row = client.command["rows"][-1]
     assert num_values == len(row["fields"])
 
+    _field_dict = {}  # used for logging
+
     for field_name, field in row["fields"]:
         value_len = reader.read_i32()
         value_bytes = reader.read_bytes(value_len)
 
         py_field_type = PG_TYPE_MAPPING[field["type_id"]]
-        field["value"] = py_field_type(value_bytes)
+        field_value = py_field_type(value_bytes)
+        field["value"] = field_value
+
+        _field_dict[field_name] = field_value  # used for logging
+
+    log_status(_field_dict)
 
 
 @register(ResponseType.EmptyQueryResponse)
@@ -319,7 +328,7 @@ def handle_empty_query_response(reader: PacketReader, client: PGClient) -> None:
     command_tag = reader.read_nullterm_string()
     client.command["has_result"] = True
 
-    log_status("received empty query response")
+    log_status(f"received empty query response for `{command_tag}`")
 
 
 @register(ResponseType.CommandComplete)
@@ -342,18 +351,29 @@ def run_client(server_sock: socket.socket) -> int:
     while not client.shutting_down:
         if client.ready_for_query:
             # prompt the user for a query
-            client.command = {
-                "query": input(f"{PS1} "),
-                "rows": [],
-                "has_result": False,
-            }
-            client.ready_for_query = False
+            try:
+                user_input = input(f"{PS1} ")
+            except (KeyboardInterrupt, EOFError):
+                # shutdown the client gracefully
+                client.shutting_down = True
 
-            client.packet_buffer += b"Q"
-            client.packet_buffer += struct.pack(
-                ">i", len(client.command["query"]) + 1 + 4
-            )
-            client.packet_buffer += client.command["query"].encode() + b"\x00"
+                # send the conn termination packet
+                client.packet_buffer += b"X"
+                client.packet_buffer += struct.pack(">i", 4)
+            else:
+                # we received user input
+                client.command = {
+                    "query": user_input,
+                    "rows": [],
+                    "has_result": False,
+                }
+                client.ready_for_query = False
+
+                client.packet_buffer += b"Q"
+                client.packet_buffer += struct.pack(
+                    ">i", len(client.command["query"]) + 1 + 4
+                )
+                client.packet_buffer += client.command["query"].encode() + b"\x00"
 
         if client.packet_buffer:
             # we have packets to send
@@ -364,6 +384,10 @@ def run_client(server_sock: socket.socket) -> int:
                 log_send(to_send)
 
             server_sock.send(to_send)
+
+        if client.shutting_down:
+            log_status("connection terminated")
+            break
 
         # read response type & lengths
         header_bytes = server_sock.recv(5)
@@ -403,7 +427,19 @@ def run_client(server_sock: socket.socket) -> int:
     return 0
 
 
+def handle_sigterm_as_keyboard_interrupt() -> None:
+    def signal_handler(signum: int, frame: Optional[FrameType] = None) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, signal_handler)
+
+
 def main() -> int:
+    # use GNU readline interface
+    import readline  # type: ignore
+
+    handle_sigterm_as_keyboard_interrupt()
+
     # connect to the postgres server
     with socket.create_connection(("127.0.0.1", 5432)) as sock:
         # and run our client until stopped
@@ -411,7 +447,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # use GNU readline interface
-    import readline  # type: ignore
-
     raise SystemExit(main())
