@@ -1,6 +1,57 @@
 import struct
+from typing import Any
 
 import helpers
+
+# binary deserialization (reading)
+
+
+class PacketReader:
+    def __init__(self, data_view: memoryview) -> None:
+        self.data_view = data_view
+
+    def read(self, fmt: str) -> tuple[Any, ...]:
+        size = struct.calcsize(fmt)
+        vals = struct.unpack_from(fmt, self.data_view[size:])
+        self.data_view = self.data_view[:size]
+        return vals
+
+    def read_bytes(self, count: int) -> bytes:
+        val = self.data_view[:count].tobytes()
+        self.data_view = self.data_view[count:]
+        return val
+
+    def read_u8(self) -> int:
+        val = self.data_view[0]
+        self.data_view = self.data_view[1:]
+        return val
+
+    def read_i16(self) -> int:
+        (val,) = struct.unpack(">h", self.data_view[:2])
+        self.data_view = self.data_view[2:]
+        return val
+
+    def read_i32(self) -> int:
+        (val,) = struct.unpack(">i", self.data_view[:4])
+        self.data_view = self.data_view[4:]
+        return val
+
+    def read_variadic_string(self) -> str:
+        length = self.read_i32()
+        val = self.data_view[:length].tobytes().decode()
+        self.data_view = self.data_view[length:]
+        return val
+
+    def read_nullterm_string(self) -> str:
+        # TODO: use a better method than bytes.find to avoid copy
+        remainder = self.data_view.tobytes()
+        length = remainder.find(b"\x00")
+        val = remainder[:length].decode()
+        self.data_view = self.data_view[length + 1 :]
+        return val
+
+
+# binary serialization (writing)
 
 
 def fe_startup_packet(
