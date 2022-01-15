@@ -10,7 +10,7 @@ import hashlib
 import socket
 import struct
 from enum import IntEnum
-from typing import Any, Callable, Optional, TypeVar, TypedDict, Type
+from typing import Any, Callable, Optional, TypeVar, TypedDict
 
 # config
 
@@ -19,10 +19,45 @@ DB_USER = b"cmyui"
 DB_PASS = b"lol123"
 
 DEBUG_MODE = True
+PS1 = "λ"
 
 # NOTE: program only supports 3.0 at the moment
 PROTO_MAJOR = 3
 PROTO_MINOR = 0
+
+
+# logging functions
+
+
+def _log(s: object, col: str, typ: str) -> None:
+    print(f"[{col}{typ}\x1b[0m]", s)
+
+
+def log_error(s: object) -> None:
+    _log(s, "\x1b[0;91m", "error")
+
+
+def log_success(s: object) -> None:
+    _log(s, "\x1b[0;92m", "success")
+
+
+def log_status(s: object) -> None:
+    _log(s, "\x1b[0;93m", "status")
+
+
+def log_handler(s: object) -> None:
+    _log(s, "\x1b[0;94m", "handler")
+
+
+def log_recv(s: object) -> None:
+    _log(s, "\x1b[0;95m", "recv")
+
+
+def log_send(s: object) -> None:
+    _log(s, "\x1b[0;96m", "send")
+
+
+# binary (de)serialization
 
 
 class PacketReader:
@@ -136,7 +171,7 @@ class Command(TypedDict):
 
 class PGClient:
     def __init__(self) -> None:
-        self.parameters = {}
+        self.parameters: dict[str, str] = {}
 
         self.shutting_down = False
         self.authenticating = False
@@ -192,7 +227,7 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
     authentication_type = reader.read_i32()
 
     if authentication_type == 5:  # md5 password
-        print("Handling salted MD5 authentication")
+        log_status("handling salted md5 authentication")
         salt = reader.read_bytes(4)
 
         # our next packet will be a password message
@@ -211,10 +246,9 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
         # auth went ok
         client.authenticating = False
         client.authenticated = True
-        print("\x1b[0;92mAuthentication successful\x1b[0m")
-
+        log_success("authentication successful")
     else:
-        print(f"[\x1b[0;91mUnhandled authentication type\x1b[0m] {authentication_type}")
+        log_error(f"unhandled authentication type {authentication_type}")
 
 
 @register(ResponseType.ParameterStatus)
@@ -222,7 +256,7 @@ def handle_parameter_status(reader: PacketReader, client: PGClient) -> None:
     key = reader.read_nullterm_string()
     val = reader.read_nullterm_string()
     client.parameters[key] = val
-    print(f"Read param {key}={val}")
+    log_status(f"read param {key}={val}")
 
 
 @register(ResponseType.BackendKeyData)
@@ -285,12 +319,12 @@ def handle_empty_query_response(reader: PacketReader, client: PGClient) -> None:
     command_tag = reader.read_nullterm_string()
     client.command["has_result"] = True
 
-    print("Received")  # TODO: print py row mapping
+    log_status("received empty query response")
 
 
 @register(ResponseType.CommandComplete)
 def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
-    print("Empty query response")
+    log_success("command complete")
 
 
 # running client
@@ -298,7 +332,7 @@ def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
 
 def run_client(server_sock: socket.socket) -> int:
     """Run the client until shut down programmatically."""
-    print("Initiating postgres protocol startup")
+    log_status("Initiating postgres protocol startup")
 
     client = PGClient()
 
@@ -309,14 +343,16 @@ def run_client(server_sock: socket.socket) -> int:
         if client.ready_for_query:
             # prompt the user for a query
             client.command = {
-                "query": input("λ "),
+                "query": input(f"{PS1} "),
                 "rows": [],
                 "has_result": False,
             }
             client.ready_for_query = False
 
             client.packet_buffer += b"Q"
-            client.packet_buffer += struct.pack(">i", len(client.command["query"]) + 1 + 4)
+            client.packet_buffer += struct.pack(
+                ">i", len(client.command["query"]) + 1 + 4
+            )
             client.packet_buffer += client.command["query"].encode() + b"\x00"
 
         if client.packet_buffer:
@@ -325,7 +361,7 @@ def run_client(server_sock: socket.socket) -> int:
             client.packet_buffer.clear()
 
             if DEBUG_MODE:
-                print("[\x1b[0;96msend\x1b[0m]", to_send)
+                log_send(to_send)
 
             server_sock.send(to_send)
 
@@ -345,19 +381,20 @@ def run_client(server_sock: socket.socket) -> int:
             to_read -= bytes_read
 
         if DEBUG_MODE:
-            print("[\x1b[0;95mrecv\x1b[0m]", header_bytes + buf_view.tobytes())
+            log_recv((header_bytes + buf_view.tobytes()))
 
         # handle response
         with memoryview(buf) as data_view:
-            reader = PacketReader(data_view.toreadonly())
-
             packet_handler = RESPONSE_HANDLERS.get(response_type)
-
             if packet_handler is None:
-                print(
-                    f"[\x1b[0;91mUnhandled response_type\x1b[0m] {chr(response_type)}={data_view.tobytes()}"
-                )
+                # we don't have a handler for this packet
+                log_error(f"{chr(response_type)}={data_view.tobytes()}")
                 continue
+
+            if DEBUG_MODE:
+                log_handler(packet_handler.__name__)
+
+            reader = PacketReader(data_view.toreadonly())
 
             # TODO: this will currently always return none
             # would it make sense to return some response?
