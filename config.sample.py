@@ -1,4 +1,4 @@
-"""Configuration values used throughout psql."""
+"""Configuration values used throughout pysql."""
 
 DB_NAME = b"gulag"
 DB_USER = b"cmyui"

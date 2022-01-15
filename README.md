@@ -1,4 +1,4 @@
-# psql - a minimal pg cli app for educational purposes
+# pysql - a minimal pg cli app for educational purposes
 
 ## Goals
 - Connect to server [Done]
