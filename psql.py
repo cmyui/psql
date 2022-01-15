@@ -10,7 +10,7 @@ import hashlib
 import socket
 import struct
 from enum import IntEnum
-from typing import Any, Optional, TypedDict
+from typing import Any, Callable, Optional, TypeVar, TypedDict, Type
 
 # config
 
@@ -146,34 +146,183 @@ class PGClient:
         self.process_id: Optional[int] = None
         self.secret_key: Optional[int] = None
 
+        self.packet_buffer = bytearray()
+
+        self.command: Optional[Command] = None
+
+
+# packet handling
+
+Handler = Callable[[PacketReader, PGClient], None]
+RESPONSE_HANDLERS: dict[ResponseType, Handler] = {}
+
+T = TypeVar("T", bound=Handler)
+
+
+def register(response_type: ResponseType) -> Callable[[T], T]:
+    def wrapper(f: T) -> T:
+        RESPONSE_HANDLERS[response_type] = f
+        return f
+
+    return wrapper
+
+
+# TODO: context class? maybe some of the clients
+# attributes don't make much sense being in there
+
+
+@register(ResponseType.ErrorResponse)
+def handle_error_response(reader: PacketReader, client: PGClient) -> None:
+    # https://www.postgresql.org/docs/14.1/protocol-error-fields.html
+    err_fields: dict[str, Optional[str]] = {t: None for t in "SVCMDHPqWstcdnFLR"}
+
+    while (field_type := reader.read_u8()) != 0:
+        field_value = reader.read_nullterm_string()
+        err_fields[chr(field_type)] = field_value
+
+    print("[{S}] {M} ({R}:{L})".format(**err_fields))
+
+    if not client.authenticated:
+        client.shutting_down = True
+
+
+@register(ResponseType.AuthenticationRequest)
+def handle_authentication_request(reader: PacketReader, client: PGClient) -> None:
+
+    authentication_type = reader.read_i32()
+
+    if authentication_type == 5:  # md5 password
+        print("Handling salted MD5 authentication")
+        salt = reader.read_bytes(4)
+
+        # our next packet will be a password message
+        # TODO: function to write this packet
+        client.packet_buffer += b"p"
+        client.packet_buffer += struct.pack(">i", 4 + 3 + 32 + 1)  # length
+
+        client.packet_buffer += b"md5"
+        client.packet_buffer += md5hex(md5hex(DB_PASS + DB_USER) + salt)
+        client.packet_buffer += b"\x00"
+
+        client.authenticating = True
+    elif authentication_type == 0:
+        assert client.authenticating is True
+
+        # auth went ok
+        client.authenticating = False
+        client.authenticated = True
+        print("\x1b[0;92mAuthentication successful\x1b[0m")
+
+    else:
+        print(f"[\x1b[0;91mUnhandled authentication type\x1b[0m] {authentication_type}")
+
+
+@register(ResponseType.ParameterStatus)
+def handle_parameter_status(reader: PacketReader, client: PGClient) -> None:
+    key = reader.read_nullterm_string()
+    val = reader.read_nullterm_string()
+    client.parameters[key] = val
+    print(f"Read param {key}={val}")
+
+
+@register(ResponseType.BackendKeyData)
+def handle_backend_key_data(reader: PacketReader, client: PGClient) -> None:
+    client.process_id = reader.read_i32()
+    client.secret_key = reader.read_i32()
+
+
+@register(ResponseType.ReadyForQuery)
+def handle_ready_for_query(reader: PacketReader, client: PGClient) -> None:
+    assert not client.ready_for_query
+    client.ready_for_query = True
+
+
+@register(ResponseType.RowDescription)
+def handle_row_description(reader: PacketReader, client: PGClient) -> None:
+    assert client.command is not None
+    num_fields = reader.read_i16()
+
+    row: Row = {"fields": []}
+
+    for _ in range(num_fields):
+        field_name = reader.read_nullterm_string()
+        field: Field = {
+            "table_id": reader.read_i32(),
+            "attr_num": reader.read_i16(),
+            "type_id": reader.read_i32(),
+            "type_size": reader.read_i16(),  # pg_type.typlen
+            "type_mod": reader.read_i32(),  # pg_attribute.atttypmod
+            "format_code": reader.read_i16(),  # 0 for text, 1 for bin
+            "value": None,
+        }
+
+        row["fields"].append((field_name, field))
+
+    client.command["rows"].append(row)
+
+
+@register(ResponseType.RowData)
+def handle_row_data(reader: PacketReader, client: PGClient) -> None:
+    assert client.command is not None
+    assert len(client.command["rows"]) != 0  # TODO: this might happen?
+
+    num_values = reader.read_i16()
+
+    row = client.command["rows"][-1]
+    assert num_values == len(row["fields"])
+
+    for field_name, field in row["fields"]:
+        value_len = reader.read_i32()
+        value_bytes = reader.read_bytes(value_len)
+
+        py_field_type = PG_TYPE_MAPPING[field["type_id"]]
+        field["value"] = py_field_type(value_bytes)
+
+
+@register(ResponseType.EmptyQueryResponse)
+def handle_empty_query_response(reader: PacketReader, client: PGClient) -> None:
+    assert client.command is not None
+    command_tag = reader.read_nullterm_string()
+    client.command["has_result"] = True
+
+    print("Received")  # TODO: print py row mapping
+
+
+@register(ResponseType.CommandComplete)
+def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
+    print("Empty query response")
+
+
+# running client
+
 
 def run_client(server_sock: socket.socket) -> int:
     """Run the client until shut down programmatically."""
     print("Initiating postgres protocol startup")
 
     client = PGClient()
-    packet_buffer = bytearray(write_startup_packet())
 
-    command: Optional[Command] = None
+    # initiate communication with a startup packet
+    client.packet_buffer = bytearray(write_startup_packet())
 
     while not client.shutting_down:
         if client.ready_for_query:
             # prompt the user for a query
-            command = {
+            client.command = {
                 "query": input("λ "),
                 "rows": [],
                 "has_result": False,
             }
             client.ready_for_query = False
 
-            packet_buffer += b"Q"
-            packet_buffer += struct.pack(">i", len(command["query"]) + 1 + 4)
-            packet_buffer += command["query"].encode() + b"\x00"
+            client.packet_buffer += b"Q"
+            client.packet_buffer += struct.pack(">i", len(client.command["query"]) + 1 + 4)
+            client.packet_buffer += client.command["query"].encode() + b"\x00"
 
-        if packet_buffer:
+        if client.packet_buffer:
             # we have packets to send
-            to_send = bytes(packet_buffer)
-            packet_buffer.clear()
+            to_send = bytes(client.packet_buffer)
+            client.packet_buffer.clear()
 
             if DEBUG_MODE:
                 print("[\x1b[0;96msend\x1b[0m]", to_send)
@@ -182,7 +331,7 @@ def run_client(server_sock: socket.socket) -> int:
 
         # read response type & lengths
         header_bytes = server_sock.recv(5)
-        response_type = header_bytes[0]
+        response_type = ResponseType(header_bytes[0])
         response_len = struct.unpack(">i", header_bytes[1:])[0]
 
         # allocate buffer for the remainder of our response
@@ -202,117 +351,17 @@ def run_client(server_sock: socket.socket) -> int:
         with memoryview(buf) as data_view:
             reader = PacketReader(data_view.toreadonly())
 
-            if response_type == ResponseType.ErrorResponse:
-                # https://www.postgresql.org/docs/14.1/protocol-error-fields.html
-                err_fields: dict[str, Optional[str]] = {
-                    t: None for t in "SVCMDHPqWstcdnFLR"
-                }
+            packet_handler = RESPONSE_HANDLERS.get(response_type)
 
-                while (field_type := reader.read_u8()) != 0:
-                    field_value = reader.read_nullterm_string()
-                    err_fields[chr(field_type)] = field_value
-
-                print("[{S}] {M} ({R}:{L})".format(**err_fields))
-
-                if not client.authenticated:
-                    client.shutting_down = True
-
-            elif response_type == ResponseType.AuthenticationRequest:
-                authentication_type = reader.read_i32()
-
-                if authentication_type == 5:  # md5 password
-                    print("Handling salted MD5 authentication")
-                    salt = reader.read_bytes(4)
-
-                    # our next packet will be a password message
-                    # TODO: function to write this packet
-                    packet_buffer += b"p"
-                    packet_buffer += struct.pack(">i", 4 + 3 + 32 + 1)  # length
-
-                    packet_buffer += b"md5"
-                    packet_buffer += md5hex(md5hex(DB_PASS + DB_USER) + salt)
-                    packet_buffer += b"\x00"
-
-                    client.authenticating = True
-                elif authentication_type == 0:
-                    assert client.authenticating is True
-
-                    # auth went ok
-                    client.authenticating = False
-                    client.authenticated = True
-                    print("\x1b[0;92mAuthentication successful\x1b[0m")
-
-                else:
-                    print(
-                        f"[\x1b[0;91mUnhandled authentication type\x1b[0m] {authentication_type}"
-                    )
-
-            elif response_type == ResponseType.ParameterStatus:
-                key = reader.read_nullterm_string()
-                val = reader.read_nullterm_string()
-                client.parameters[key] = val
-                print(f"Read param {key}={val}")
-
-            elif response_type == ResponseType.BackendKeyData:
-                client.process_id = reader.read_i32()
-                client.secret_key = reader.read_i32()
-
-            elif response_type == ResponseType.ReadyForQuery:
-                assert not client.ready_for_query
-                client.ready_for_query = True
-
-            elif response_type == ResponseType.RowDescription:
-                assert command is not None
-                num_fields = reader.read_i16()
-
-                row: Row = {"fields": []}
-
-                for _ in range(num_fields):
-                    field_name = reader.read_nullterm_string()
-                    field: Field = {
-                        "table_id": reader.read_i32(),
-                        "attr_num": reader.read_i16(),
-                        "type_id": reader.read_i32(),
-                        "type_size": reader.read_i16(),  # pg_type.typlen
-                        "type_mod": reader.read_i32(),  # pg_attribute.atttypmod
-                        "format_code": reader.read_i16(),  # 0 for text, 1 for bin
-                        "value": None,
-                    }
-
-                    row["fields"].append((field_name, field))
-
-                command["rows"].append(row)
-
-            elif response_type == ResponseType.RowData:
-                assert command is not None
-                assert len(command["rows"]) != 0  # TODO: this might happen?
-
-                num_values = reader.read_i16()
-
-                row = command["rows"][-1]
-                assert num_values == len(row["fields"])
-
-                for field_name, field in row["fields"]:
-                    value_len = reader.read_i32()
-                    value_bytes = reader.read_bytes(value_len)
-
-                    py_field_type = PG_TYPE_MAPPING[field["type_id"]]
-                    field["value"] = py_field_type(value_bytes)
-
-            elif response_type == ResponseType.CommandComplete:
-                assert command is not None
-                command_tag = reader.read_nullterm_string()
-                command["has_result"] = True
-
-                print("Received")  # TODO: print py row mapping
-
-            elif response_type == ResponseType.EmptyQueryResponse:
-                print("Empty query response")
-
-            else:  # unknown packet type
+            if packet_handler is None:
                 print(
                     f"[\x1b[0;91mUnhandled response_type\x1b[0m] {chr(response_type)}={data_view.tobytes()}"
                 )
+                continue
+
+            # TODO: this will currently always return none
+            # would it make sense to return some response?
+            result = packet_handler(reader, client)
 
     return 0
 
