@@ -74,6 +74,7 @@ class PacketReader:
 
 
 # binary serialization (writing)
+# TODO: some sort of ordering of these packets
 
 
 def fe_startup_packet(

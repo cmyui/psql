@@ -60,12 +60,21 @@ class AuthenticationRequest(IntEnum):
     SASL_FINAL = 12
 
 
+# TODO: perhaps for packets with multiple subtypes like this,
+#       could we use class with decorated methods to handle subtypes?
 @register(ResponseType.AuthenticationRequest)
 def handle_authentication_request(reader: PacketReader, client: PGClient) -> None:
-
     authentication_type = reader.read_i32()
 
-    if authentication_type == AuthenticationRequest.MD5_PASS:
+    if authentication_type == AuthenticationRequest.SUCCESSFUL:
+        """Response to previous auth request - we authed successfully."""
+        assert client.authenticating is True
+
+        client.authenticating = False
+        client.authenticated = True
+        log.success("authentication successful")
+    elif authentication_type == AuthenticationRequest.MD5_PASS:
+        """The backend is requesting our authentication with an md5ed password."""
         if config.DEBUG_MODE:
             log.status("handling salted md5 authentication")
 
@@ -77,12 +86,7 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
         )
 
         client.authenticating = True
-    elif authentication_type == AuthenticationRequest.SUCCESSFUL:
-        assert client.authenticating is True
-
-        client.authenticating = False
-        client.authenticated = True
-        log.success("authentication successful")
+    # TODO: add support for & test other auth types
     else:
         log.error(f"unhandled authentication type {authentication_type}")
 
@@ -91,8 +95,8 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
 def handle_parameter_status(reader: PacketReader, client: PGClient) -> None:
     key = reader.read_nullterm_string()
     val = reader.read_nullterm_string()
-    client.parameters[key] = val
 
+    client.parameters[key] = val
     if config.DEBUG_MODE:
         log.status(f"read param {key}={val}")
 
@@ -125,7 +129,7 @@ def handle_row_description(reader: PacketReader, client: PGClient) -> None:
             "type_size": reader.read_i16(),  # pg_type.typlen
             "type_mod": reader.read_i32(),  # pg_attribute.atttypmod
             "format_code": reader.read_i16(),  # 0 for text, 1 for bin
-            "value": None,
+            "value": None,  # assigned in the following (RowData) packet
         }
 
         row["fields"].append((field_name, field))
@@ -136,7 +140,7 @@ def handle_row_description(reader: PacketReader, client: PGClient) -> None:
 @register(ResponseType.RowData)
 def handle_row_data(reader: PacketReader, client: PGClient) -> None:
     assert client.command is not None
-    assert len(client.command["rows"]) != 0  # TODO: this might happen?
+    assert len(client.command["rows"]) != 0  # TODO: might this happen?
 
     num_values = reader.read_i16()
 
@@ -147,7 +151,11 @@ def handle_row_data(reader: PacketReader, client: PGClient) -> None:
         value_len = reader.read_i32()
         value_bytes = reader.read_bytes(value_len)
 
+        # look up & retrieve the correct python type for this value
         py_field_type = objects.PG_TYPE_MAPPING[field["type_id"]]
+
+        # cast it from the bytes to the python type
+        # TODO: this soln likely does not always work
         field["value"] = py_field_type(value_bytes)
 
         log.status(f"read field {field_name}={field['value']}")

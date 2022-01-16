@@ -2,6 +2,9 @@
 """A program for playing with the postgres 3.0 protocol - for learning purposes.
 
 I've been wanting to make a database client for a while now, this is pretty fun!
+
+References
+1. PG Protocol Flow https://www.postgresql.org/docs/14/protocol-flow.html
 """
 
 __author__ = "Joshua Smith (cmyui)"
