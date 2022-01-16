@@ -35,7 +35,7 @@ class ResponseType(IntEnum):
     RowDescription = ord("T")
 
 
-def read_packet_header(data: bytes) -> tuple[ResponseType, int]:
+def read_header(data: bytes) -> tuple[ResponseType, int]:
     assert len(data) == 5
 
     response_type = ResponseType(data[0])
@@ -92,7 +92,7 @@ class PacketReader:
 # TODO: some sort of ordering of these packets
 
 
-def fe_startup_packet(
+def startup(
     proto_ver_major: int,
     proto_ver_minor: int,
     db_params: dict[bytes, bytes],
@@ -112,14 +112,14 @@ def fe_startup_packet(
     return packet
 
 
-def fe_termination_packet() -> bytes:
+def termination() -> bytes:
     packet = bytearray()
     packet += b"X"
     packet += struct.pack(">i", 4)
     return packet
 
 
-def fe_query_packet(query: str) -> bytes:
+def query(query: str) -> bytes:
     packet = bytearray()
     packet += b"Q"
     packet += struct.pack(">i", len(query) + 1 + 4)
@@ -127,7 +127,7 @@ def fe_query_packet(query: str) -> bytes:
     return packet
 
 
-def fe_md5_auth_packet(db_user: bytes, db_pass: bytes, salt: bytes) -> bytes:
+def auth_md5_pass(db_user: bytes, db_pass: bytes, salt: bytes) -> bytes:
     packet = bytearray()
     packet += b"p"
     packet += struct.pack(">i", 4 + 3 + 32 + 1)  # length

@@ -31,7 +31,7 @@ def run_client(server_sock: socket.socket) -> int:
     client = objects.PGClient()
 
     # initiate communication with a startup packet
-    client.packet_buffer += packets.fe_startup_packet(
+    client.packet_buffer += packets.startup(
         proto_ver_major=config.PROTO_MAJOR,
         proto_ver_minor=config.PROTO_MINOR,
         db_params={
@@ -55,7 +55,7 @@ def run_client(server_sock: socket.socket) -> int:
                 print("\x1b[0;91mreceived interrupt signal\x1b[0m")
 
                 # send the conn termination packet
-                client.packet_buffer += packets.fe_termination_packet()
+                client.packet_buffer += packets.termination()
             else:
                 # we received user input, issue a command (query) to the backend
                 client.command = {
@@ -64,7 +64,7 @@ def run_client(server_sock: socket.socket) -> int:
                     "has_result": False,
                 }
                 client.ready_for_query = False
-                client.packet_buffer += packets.fe_query_packet(client.command["query"])
+                client.packet_buffer += packets.query(client.command["query"])
 
         if client.packet_buffer:
             # we have packets to send
@@ -82,7 +82,7 @@ def run_client(server_sock: socket.socket) -> int:
 
         # read response type & lengths
         header_bytes = server_sock.recv(5)
-        response_type, response_len = packets.read_packet_header(header_bytes)
+        response_type, response_len = packets.read_header(header_bytes)
 
         # allocate buffer for the remainder of our response
         to_read = response_len - 4  # (don't include length)

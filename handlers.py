@@ -126,7 +126,7 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
             log.status("handling salted md5 authentication")
 
         # send md5 password authentication packet
-        client.packet_buffer += packets.fe_md5_auth_packet(
+        client.packet_buffer += packets.auth_md5_pass(
             db_user=config.DB_USER,
             db_pass=config.DB_PASS,
             salt=reader.read_bytes(4),
