@@ -1,3 +1,4 @@
+from enum import IntEnum
 from typing import Callable, Optional, TypeVar
 
 import config
@@ -42,12 +43,29 @@ def handle_error_response(reader: PacketReader, client: PGClient) -> None:
         client.shutting_down = True
 
 
+class AuthenticationRequest(IntEnum):
+    SUCCESSFUL = 0
+
+    KEREBEROS_V5 = 2
+    CLEAR_TEXT_PASS = 3
+    MD5_PASS = 5
+    SCM_CREDENTIAL = 6
+    GSS = 7
+    GSS_CONTINUE = 8
+    SSPI = 9
+
+    # https://www.postgresql.org/docs/14/sasl-authentication.html
+    SASL = 10
+    SASL_CONTINUE = 11
+    SASL_FINAL = 12
+
+
 @register(ResponseType.AuthenticationRequest)
 def handle_authentication_request(reader: PacketReader, client: PGClient) -> None:
 
     authentication_type = reader.read_i32()
 
-    if authentication_type == 5:  # md5 password
+    if authentication_type == AuthenticationRequest.MD5_PASS:
         if config.DEBUG_MODE:
             log.status("handling salted md5 authentication")
 
@@ -59,10 +77,9 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
         )
 
         client.authenticating = True
-    elif authentication_type == 0:
+    elif authentication_type == AuthenticationRequest.SUCCESSFUL:
         assert client.authenticating is True
 
-        # auth went ok
         client.authenticating = False
         client.authenticated = True
         log.success("authentication successful")
