@@ -1,5 +1,5 @@
 import struct
-from enum import IntEnum
+from enum import IntEnum, unique
 from typing import Any
 
 import helpers
@@ -7,17 +7,32 @@ import helpers
 # binary deserialization (reading)
 
 
+@unique
 class ResponseType(IntEnum):
     # https://www.postgresql.org/docs/14/protocol-message-formats.html
-    ErrorResponse = ord("E")
     AuthenticationRequest = ord("R")
-    ParameterStatus = ord("S")
     BackendKeyData = ord("K")
+    BindComplete = ord("2")  # TODO
+    CommandComplete = ord("C")
+    CopyData = ord("d")  # TODO
+    CopyDone = ord("c")  # TODO
+    CopyInResponse = ord("G")  # TODO
+    CopyOutResponse = ord("H")  # TODO
+    CopyBothResponse = ord("W")  # TODO
+    DataRow = ord("D")  # TODO
+    EmptyQueryResponse = ord("I")
+    ErrorResponse = ord("E")
+    FunctionCallResponse = ord("V")  # TODO
+    NegotiateProtocolVersion = ord("v")  # TODO
+    NoData = ord("n")  # TODO
+    NoticeResponse = ord("N")
+    NotificationResponse = ord("A")
+    ParameterDescription = ord("t")
+    ParameterStatus = ord("S")
+    ParseComplete = ord("1")  # TODO
+    PortalSuspended = ord("s")  # TODO
     ReadyForQuery = ord("Z")
     RowDescription = ord("T")
-    RowData = ord("D")
-    CommandComplete = ord("C")
-    EmptyQueryResponse = ord("I")
 
 
 def read_packet_header(data: bytes) -> tuple[ResponseType, int]:
