@@ -114,8 +114,7 @@ def handle_authentication_request(reader: PacketReader, client: PGClient) -> Non
     authentication_type = reader.read_i32()
 
     if authentication_type == AuthenticationRequest.SUCCESSFUL:
-        """Response to previous auth request - we authed successfully."""
-        assert client.authenticating is True
+        """Backend has accepted authentication from the client."""
 
         client.authenticating = False
         client.authenticated = True
