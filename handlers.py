@@ -79,6 +79,17 @@ def handle_notice_response(reader: PacketReader, client: PGClient) -> None:
     log.notice(message)
 
 
+@register(ResponseType.NotificationResponse)
+def handle_notification_response(reader: PacketReader, client: PGClient) -> None:
+    backend_process_id = reader.read_i32()
+    assert backend_process_id == client.process_id  # TODO: not sure if always true
+
+    channel_name = reader.read_nullterm_string()
+    payload = reader.read_nullterm_string()
+
+    log.notice(f"[notif > pid: {backend_process_id}:{channel_name}] {payload}")
+
+
 class AuthenticationRequest(IntEnum):
     SUCCESSFUL = 0
 
@@ -173,7 +184,7 @@ def handle_row_description(reader: PacketReader, client: PGClient) -> None:
     client.command["rows"].append(row)
 
 
-@register(ResponseType.RowData)
+@register(ResponseType.DataRow)
 def handle_row_data(reader: PacketReader, client: PGClient) -> None:
     assert client.command is not None
     assert len(client.command["rows"]) != 0  # TODO: might this happen?
