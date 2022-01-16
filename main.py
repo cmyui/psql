@@ -8,13 +8,11 @@ __author__ = "Joshua Smith (cmyui)"
 __email__ = "cmyuiosu@gmail.com"
 
 
-import signal
 import socket
-from types import FrameType
-from typing import Optional
 
 import config
 import handlers
+import helpers
 import log
 import objects
 import packets
@@ -47,7 +45,7 @@ def run_client(server_sock: socket.socket) -> int:
             # prompt the user for a query
             try:
                 user_input = input(f"{config.PS1} ")
-            except (SignalError, EOFError):
+            except (helpers.SignalError, EOFError):
                 # shutdown the client gracefully
                 client.shutting_down = True
 
@@ -115,32 +113,13 @@ def run_client(server_sock: socket.socket) -> int:
     return 0
 
 
-class SignalError(Exception):
-    ...
-
-
-def setup_shutdown_signal_handlers() -> None:
-    def signal_handler(
-        signum: int,
-        frame: Optional[FrameType] = None,
-    ) -> None:
-        raise SignalError
-
-    for signum in {
-        signal.SIGINT,
-        signal.SIGTERM,
-        signal.SIGHUP,
-    }:
-        signal.signal(signum, signal_handler)
-
-
 def main() -> int:
     # use GNU readline interface
     import readline  # type: ignore
 
     # ensure the server is notified
     # of any client disconnections
-    setup_shutdown_signal_handlers()
+    helpers.setup_shutdown_signal_handlers()
 
     # connect to the postgres server
     # and run our client until stopped
