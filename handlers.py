@@ -27,20 +27,56 @@ def register(response_type: ResponseType) -> Callable[[T], T]:
 # TODO: context class? maybe some of the clients
 # attributes don't make much sense being in there
 
+ERR_NOTICE_FIELDS = list("SVCMDHPqWstcdnFLR")
 
-@register(ResponseType.ErrorResponse)
-def handle_error_response(reader: PacketReader, client: PGClient) -> None:
+
+# TODO: is it possible to type the dict key with a literal of the above list?
+def read_err_notice_fields(reader: PacketReader) -> dict[str, Optional[str]]:
     # https://www.postgresql.org/docs/14.1/protocol-error-fields.html
-    err_fields: dict[str, Optional[str]] = {t: None for t in "SVCMDHPqWstcdnFLR"}
+    fields: dict[str, Optional[str]] = {t: None for t in ERR_NOTICE_FIELDS}
 
     while (field_type := reader.read_u8()) != 0:
         field_value = reader.read_nullterm_string()
-        err_fields[chr(field_type)] = field_value
+        fields[chr(field_type)] = field_value
 
-    log.error("[{S}] {M} ({R}:{L})".format(**err_fields))
+    return fields
 
+
+@register(ResponseType.ErrorResponse)
+def handle_error_response(reader: PacketReader, client: PGClient) -> None:
+    fields = read_err_notice_fields(reader)
+
+    message = fields["M"]
+    assert message is not None
+
+    if config.DEBUG_MODE:
+        # add the server-side line number where the fault occurred
+        message += " ({R}:{L})".format(**fields)
+
+    # TODO: err_fields["S"] is not always "error",
+    #       it may also be "fatal" or "panic"
+    log.error(message)
+
+    # if the client is pending authentication, cancel it.
+    # TODO: this may not always be an appropriate shutdown?
     if not client.authenticated:
         client.shutting_down = True
+
+
+@register(ResponseType.NoticeResponse)
+def handle_notice_response(reader: PacketReader, client: PGClient) -> None:
+    fields = read_err_notice_fields(reader)
+
+    message = fields["M"]
+    assert message is not None
+
+    if config.DEBUG_MODE:
+        # add the server-side line number where the fault occurred
+        message += " ({R}:{L})".format(**fields)
+
+    # TODO: err_fields["S"] is not always "notice",
+    #       it may also be "warning", "info", "debug", or "log"
+    log.notice(message)
 
 
 class AuthenticationRequest(IntEnum):
