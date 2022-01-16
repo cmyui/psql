@@ -17,7 +17,7 @@ __email__ = "cmyuiosu@gmail.com"
 import argparse
 import socket
 import sys
-from typing import Sequence
+from typing import Sequence, cast
 
 import config
 import handlers
@@ -156,6 +156,7 @@ def main(argv: Sequence[str]) -> int:
     cli_parser.add_argument("-U", "--user", default=None)
     cli_parser.add_argument("-H", "--host", default=None)
     cli_parser.add_argument("-P", "--port", default=None)
+    # TODO: passwd input with getpass()
 
     if len(argv) == 0:
         argv = ["--help"]
@@ -168,6 +169,15 @@ def main(argv: Sequence[str]) -> int:
     if args.command == "cli":
         """Auth into backend & open a command line interface."""
         # authenticate & open a command line interface
+
+        # parse cli-specific arguments
+        if args.user:
+            config.DB_USER = cast(str, args.user).encode()
+        if args.host:
+            config.DB_HOST = cast(str, args.host)
+        if args.port:
+            config.DB_PORT = int(cast(str, args.port))
+
         # use GNU readline interface
         import readline  # type: ignore
 
