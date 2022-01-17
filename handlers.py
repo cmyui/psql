@@ -27,6 +27,9 @@ def register(response_type: ResponseType) -> Callable[[T], T]:
 # TODO: context class? maybe some of the clients
 # attributes don't make much sense being in there
 
+# TODO: a lot of the handlers were built simply from
+# reading the documentation and still require testing.
+
 ERR_NOTICE_FIELDS = list("SVCMDHPqWstcdnFLR")
 
 
@@ -95,9 +98,57 @@ def handle_backend_key_data(reader: PacketReader, client: PGClient) -> None:
     client.secret_key = reader.read_i32()
 
 
+@register(ResponseType.BindComplete)
+def handle_bind_complete(reader: PacketReader, client: PGClient) -> None:
+    log.success("bind complete")
+
+
 @register(ResponseType.CommandComplete)
 def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
     log.success("command complete")
+
+
+@register(ResponseType.CopyData)
+def handle_copy_data(reader: PacketReader, client: PGClient) -> None:
+    log.status(f"copy data {reader.data_view.tobytes().decode()}")
+
+
+@register(ResponseType.CopyDone)
+def handle_copy_done(reader: PacketReader, client: PGClient) -> None:
+    log.status("copy done")
+
+
+class CopyFormat(IntEnum):
+    # https://www.postgresql.org/docs/14/sql-copy.html
+    TEXTUAL = 0
+    BINARY = 1
+
+
+@register(ResponseType.CopyInResponse)
+def handle_copy_in_response(reader: PacketReader, client: PGClient) -> None:
+    copy_format = CopyFormat(reader.read_u8())
+    num_columns = reader.read_i16()
+    format_codes = [reader.read_i16() for _ in range(num_columns)]
+
+    breakpoint()  # TODO
+
+
+@register(ResponseType.CopyOutResponse)
+def handle_copy_out_response(reader: PacketReader, client: PGClient) -> None:
+    copy_format = CopyFormat(reader.read_u8())
+    num_columns = reader.read_i16()
+    format_codes = [reader.read_i16() for _ in range(num_columns)]
+
+    breakpoint()  # TODO
+
+
+@register(ResponseType.CopyBothResponse)
+def handle_copy_both_response(reader: PacketReader, client: PGClient) -> None:
+    copy_format = CopyFormat(reader.read_u8())
+    num_columns = reader.read_i16()
+    format_codes = [reader.read_i16() for _ in range(num_columns)]
+
+    breakpoint()  # TODO
 
 
 @register(ResponseType.DataRow)
@@ -154,6 +205,32 @@ def handle_error_response(reader: PacketReader, client: PGClient) -> None:
         client.shutting_down = True
 
 
+@register(ResponseType.FunctionCallResponse)
+def handle_function_call_response(reader: PacketReader, client: PGClient) -> None:
+    return_val_len = reader.read_i32()
+    return_val = reader.read_bytes(return_val_len)
+    log.status(f"function call returned {return_val}")
+
+
+@register(ResponseType.NegotiateProtocolVersion)
+def handle_negotiate_protocol_version(reader: PacketReader, client: PGClient) -> None:
+    backend_newest_minor_version = reader.read_i32()
+    num_options_not_recognized = reader.read_i32()
+
+    if num_options_not_recognized != 0:
+        # TODO: docs are unclear here, is this a field PER option?
+        unrecognized_options = [
+            reader.read_nullterm_string() for _ in range(num_options_not_recognized)
+        ]
+
+        # TODO: log to user?
+
+
+@register(ResponseType.NoData)
+def handle_no_data(reader: PacketReader, client: PGClient) -> None:
+    log.status("no data")
+
+
 @register(ResponseType.NoticeResponse)
 def handle_notice_response(reader: PacketReader, client: PGClient) -> None:
     fields = read_err_notice_fields(reader)
@@ -189,6 +266,16 @@ def handle_parameter_status(reader: PacketReader, client: PGClient) -> None:
     client.parameters[key] = val
     if config.DEBUG_MODE:
         log.status(f"read param {key}={val}")
+
+
+@register(ResponseType.ParseComplete)
+def handle_parse_complete(reader: PacketReader, client: PGClient) -> None:
+    log.status("parse complete")
+
+
+@register(ResponseType.PortalSuspended)
+def handle_portal_suspended(reader: PacketReader, client: PGClient) -> None:
+    log.status("portal suspended (an execute query's row-count limit was reached)")
 
 
 @register(ResponseType.ReadyForQuery)

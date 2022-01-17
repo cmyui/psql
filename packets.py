@@ -12,25 +12,25 @@ class ResponseType(IntEnum):
     # https://www.postgresql.org/docs/14/protocol-message-formats.html
     AuthenticationRequest = ord("R")
     BackendKeyData = ord("K")
-    BindComplete = ord("2")  # TODO
+    BindComplete = ord("2")
     CommandComplete = ord("C")
-    CopyData = ord("d")  # TODO
-    CopyDone = ord("c")  # TODO
-    CopyInResponse = ord("G")  # TODO
-    CopyOutResponse = ord("H")  # TODO
-    CopyBothResponse = ord("W")  # TODO
+    CopyData = ord("d")
+    CopyDone = ord("c")
+    CopyInResponse = ord("G")
+    CopyOutResponse = ord("H")
+    CopyBothResponse = ord("W")
     DataRow = ord("D")
     EmptyQueryResponse = ord("I")
     ErrorResponse = ord("E")
-    FunctionCallResponse = ord("V")  # TODO
-    NegotiateProtocolVersion = ord("v")  # TODO
-    NoData = ord("n")  # TODO
+    FunctionCallResponse = ord("V")
+    NegotiateProtocolVersion = ord("v")
+    NoData = ord("n")
     NoticeResponse = ord("N")
     NotificationResponse = ord("A")
     ParameterDescription = ord("t")
     ParameterStatus = ord("S")
-    ParseComplete = ord("1")  # TODO
-    PortalSuspended = ord("s")  # TODO
+    ParseComplete = ord("1")
+    PortalSuspended = ord("s")
     ReadyForQuery = ord("Z")
     RowDescription = ord("T")
 
