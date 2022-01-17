@@ -19,7 +19,7 @@ class ResponseType(IntEnum):
     CopyInResponse = ord("G")  # TODO
     CopyOutResponse = ord("H")  # TODO
     CopyBothResponse = ord("W")  # TODO
-    DataRow = ord("D")  # TODO
+    DataRow = ord("D")
     EmptyQueryResponse = ord("I")
     ErrorResponse = ord("E")
     FunctionCallResponse = ord("V")  # TODO

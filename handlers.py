@@ -42,6 +42,97 @@ def read_err_notice_fields(reader: PacketReader) -> dict[str, Optional[str]]:
     return fields
 
 
+class AuthenticationRequest(IntEnum):
+    SUCCESSFUL = 0
+
+    KEREBEROS_V5 = 2
+    CLEAR_TEXT_PASS = 3
+    MD5_PASS = 5
+    SCM_CREDENTIAL = 6
+    GSS = 7
+    GSS_CONTINUE = 8
+    SSPI = 9
+
+    # https://www.postgresql.org/docs/14/sasl-authentication.html
+    SASL = 10
+    SASL_CONTINUE = 11
+    SASL_FINAL = 12
+
+
+# TODO: perhaps for packets with multiple subtypes like this,
+#       could we use class with decorated methods to handle subtypes?
+@register(ResponseType.AuthenticationRequest)
+def handle_authentication_request(reader: PacketReader, client: PGClient) -> None:
+    authentication_type = reader.read_i32()
+
+    if authentication_type == AuthenticationRequest.SUCCESSFUL:
+        """Backend has accepted authentication from the client."""
+
+        client.authenticating = False
+        client.authenticated = True
+        log.success("authentication successful")
+    elif authentication_type == AuthenticationRequest.MD5_PASS:
+        """The backend is requesting our authentication with an md5ed password."""
+        if config.DEBUG_MODE:
+            log.status("handling salted md5 authentication")
+
+        # send md5 password authentication packet
+        client.packet_buffer += packets.auth_md5_pass(
+            db_user=config.DB_USER,
+            db_pass=config.DB_PASS,
+            salt=reader.read_bytes(4),
+        )
+
+        client.authenticating = True
+    # TODO: add support for & test other auth types
+    else:
+        log.error(f"unhandled authentication type {authentication_type}")
+
+
+@register(ResponseType.BackendKeyData)
+def handle_backend_key_data(reader: PacketReader, client: PGClient) -> None:
+    client.process_id = reader.read_i32()
+    client.secret_key = reader.read_i32()
+
+
+@register(ResponseType.CommandComplete)
+def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
+    log.success("command complete")
+
+
+@register(ResponseType.DataRow)
+def handle_row_data(reader: PacketReader, client: PGClient) -> None:
+    assert client.command is not None
+    assert len(client.command["rows"]) != 0  # TODO: might this happen?
+
+    num_values = reader.read_i16()
+
+    row = client.command["rows"][-1]
+    assert num_values == len(row["fields"])
+
+    for field_name, field in row["fields"]:
+        value_len = reader.read_i32()
+        value_bytes = reader.read_bytes(value_len)
+
+        # look up & retrieve the correct python type for this value
+        py_field_type = objects.PG_TYPE_MAPPING[field["type_id"]]
+
+        # cast it from the bytes to the python type
+        # TODO: this soln likely does not always work
+        field["value"] = py_field_type(value_bytes)
+
+        log.status(f"read field {field_name}={field['value']}")
+
+
+@register(ResponseType.EmptyQueryResponse)
+def handle_empty_query_response(reader: PacketReader, client: PGClient) -> None:
+    assert client.command is not None
+    command_tag = reader.read_nullterm_string()
+    client.command["has_result"] = True
+
+    log.status(f"received empty query response for `{command_tag}`")
+
+
 @register(ResponseType.ErrorResponse)
 def handle_error_response(reader: PacketReader, client: PGClient) -> None:
     fields = read_err_notice_fields(reader)
@@ -90,53 +181,6 @@ def handle_notification_response(reader: PacketReader, client: PGClient) -> None
     log.notice(f"[notif > pid: {backend_process_id}:{channel_name}] {payload}")
 
 
-class AuthenticationRequest(IntEnum):
-    SUCCESSFUL = 0
-
-    KEREBEROS_V5 = 2
-    CLEAR_TEXT_PASS = 3
-    MD5_PASS = 5
-    SCM_CREDENTIAL = 6
-    GSS = 7
-    GSS_CONTINUE = 8
-    SSPI = 9
-
-    # https://www.postgresql.org/docs/14/sasl-authentication.html
-    SASL = 10
-    SASL_CONTINUE = 11
-    SASL_FINAL = 12
-
-
-# TODO: perhaps for packets with multiple subtypes like this,
-#       could we use class with decorated methods to handle subtypes?
-@register(ResponseType.AuthenticationRequest)
-def handle_authentication_request(reader: PacketReader, client: PGClient) -> None:
-    authentication_type = reader.read_i32()
-
-    if authentication_type == AuthenticationRequest.SUCCESSFUL:
-        """Backend has accepted authentication from the client."""
-
-        client.authenticating = False
-        client.authenticated = True
-        log.success("authentication successful")
-    elif authentication_type == AuthenticationRequest.MD5_PASS:
-        """The backend is requesting our authentication with an md5ed password."""
-        if config.DEBUG_MODE:
-            log.status("handling salted md5 authentication")
-
-        # send md5 password authentication packet
-        client.packet_buffer += packets.auth_md5_pass(
-            db_user=config.DB_USER,
-            db_pass=config.DB_PASS,
-            salt=reader.read_bytes(4),
-        )
-
-        client.authenticating = True
-    # TODO: add support for & test other auth types
-    else:
-        log.error(f"unhandled authentication type {authentication_type}")
-
-
 @register(ResponseType.ParameterStatus)
 def handle_parameter_status(reader: PacketReader, client: PGClient) -> None:
     key = reader.read_nullterm_string()
@@ -145,12 +189,6 @@ def handle_parameter_status(reader: PacketReader, client: PGClient) -> None:
     client.parameters[key] = val
     if config.DEBUG_MODE:
         log.status(f"read param {key}={val}")
-
-
-@register(ResponseType.BackendKeyData)
-def handle_backend_key_data(reader: PacketReader, client: PGClient) -> None:
-    client.process_id = reader.read_i32()
-    client.secret_key = reader.read_i32()
 
 
 @register(ResponseType.ReadyForQuery)
@@ -181,41 +219,3 @@ def handle_row_description(reader: PacketReader, client: PGClient) -> None:
         row["fields"].append((field_name, field))
 
     client.command["rows"].append(row)
-
-
-@register(ResponseType.DataRow)
-def handle_row_data(reader: PacketReader, client: PGClient) -> None:
-    assert client.command is not None
-    assert len(client.command["rows"]) != 0  # TODO: might this happen?
-
-    num_values = reader.read_i16()
-
-    row = client.command["rows"][-1]
-    assert num_values == len(row["fields"])
-
-    for field_name, field in row["fields"]:
-        value_len = reader.read_i32()
-        value_bytes = reader.read_bytes(value_len)
-
-        # look up & retrieve the correct python type for this value
-        py_field_type = objects.PG_TYPE_MAPPING[field["type_id"]]
-
-        # cast it from the bytes to the python type
-        # TODO: this soln likely does not always work
-        field["value"] = py_field_type(value_bytes)
-
-        log.status(f"read field {field_name}={field['value']}")
-
-
-@register(ResponseType.EmptyQueryResponse)
-def handle_empty_query_response(reader: PacketReader, client: PGClient) -> None:
-    assert client.command is not None
-    command_tag = reader.read_nullterm_string()
-    client.command["has_result"] = True
-
-    log.status(f"received empty query response for `{command_tag}`")
-
-
-@register(ResponseType.CommandComplete)
-def handle_command_complete(reader: PacketReader, client: PGClient) -> None:
-    log.success("command complete")
