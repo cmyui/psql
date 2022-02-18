@@ -156,6 +156,7 @@ def main(argv: Sequence[str]) -> int:
     cli_parser.add_argument("-U", "--user", default=None)
     cli_parser.add_argument("-H", "--host", default=None)
     cli_parser.add_argument("-P", "--port", default=None)
+    cli_parser.add_argument("-D", "--database", default=None)
     # TODO: passwd input with getpass()
 
     if len(argv) == 0:
@@ -177,6 +178,8 @@ def main(argv: Sequence[str]) -> int:
             config.DB_HOST = cast(str, args.host)
         if args.port:
             config.DB_PORT = int(cast(str, args.port))
+        if args.database:
+            config.DB_NAME = cast(str, args.database).encode()
 
         # use GNU readline interface
         import readline  # type: ignore
